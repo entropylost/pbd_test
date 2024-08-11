@@ -5,7 +5,6 @@ struct Particle {
     position: Vec2,
     predicted_position: Vec2,
     displacement: Vec2,
-    next_displacement: Vec2,
     radius: f32,
     inv_mass: f32,
 }
@@ -19,7 +18,6 @@ async fn main() {
             position: vec2(10.0, 0.0),
             predicted_position: vec2(10.0, 0.0),
             displacement: vec2(-0.1, 0.0),
-            next_displacement: vec2(-0.1, 0.0),
             radius: 1.0,
             inv_mass: 0.01,
         },
@@ -27,7 +25,6 @@ async fn main() {
             position: vec2(0.0, 0.0),
             predicted_position: vec2(0.0, 0.0),
             displacement: vec2(0.0, 0.0),
-            next_displacement: vec2(0.0, 0.0),
             radius: 0.5,
             inv_mass: 0.0,
         },
@@ -35,7 +32,6 @@ async fn main() {
             position: vec2(1.0, 0.0),
             predicted_position: vec2(1.0, 0.0),
             displacement: vec2(0.0, 0.0),
-            next_displacement: vec2(0.0, 0.0),
             radius: 0.5,
             inv_mass: 1.0,
         },
@@ -45,7 +41,6 @@ async fn main() {
         clear_background(BLACK);
 
         if is_key_pressed(KeyCode::Period) || is_key_down(KeyCode::Space) {
-            /*
             for particle in &mut particles {
                 let pos = particle.position + particle.displacement;
                 particle.position = pos;
@@ -69,32 +64,6 @@ async fn main() {
                     }
                 }
                 particles[ix].displacement += displacement;
-            }
-            */
-            for particle in &mut particles {
-                particle.displacement = particle.next_displacement;
-                particle.position += particle.displacement;
-            }
-            for ix in 0..particles.len() {
-                let particle = &particles[ix];
-                let pos = particle.position;
-                let vel = particle.displacement;
-                let mut displacement = vec2(0.0, 0.0);
-                for other_particle in &particles {
-                    if other_particle.position != particle.position {
-                        let other_pos = other_particle.position;
-                        let delta = pos - other_pos;
-                        let dist = delta.length();
-                        let penetration = particle.radius + other_particle.radius - dist;
-                        if penetration > 0.0 {
-                            let normal = delta / dist;
-                            let dv = vel - other_particle.displacement;
-                            displacement -= normal * normal.dot(dv).min(0.0) * particle.inv_mass
-                                / (particle.inv_mass + other_particle.inv_mass);
-                        }
-                    }
-                }
-                particles[ix].next_displacement = particle.displacement + displacement;
             }
         }
         for particle in &particles {
