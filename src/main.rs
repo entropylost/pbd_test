@@ -1,7 +1,8 @@
 use macroquad::prelude::*;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct Particle {
+    rest_position: Vec2,
     position: Vec2,
     predicted_position: Vec2,
     displacement: Vec2,
@@ -15,27 +16,37 @@ async fn main() {
 
     let mut particles = vec![
         Particle {
-            position: vec2(10.0, 0.0),
-            predicted_position: vec2(10.0, 0.0),
+            position: vec2(1.0, 1.0),
             displacement: vec2(-0.1, 0.0),
-            radius: 1.0,
-            inv_mass: 0.01,
+            radius: 0.5,
+            inv_mass: 1.0,
+            ..Default::default()
+        },
+        Particle {
+            position: vec2(0.0, 1.0),
+            displacement: vec2(-0.1, 0.0),
+            radius: 0.5,
+            inv_mass: 1.0,
+            ..Default::default()
         },
         Particle {
             position: vec2(0.0, 0.0),
-            predicted_position: vec2(0.0, 0.0),
-            displacement: vec2(0.0, 0.0),
-            radius: 0.5,
-            inv_mass: 0.0,
-        },
-        Particle {
-            position: vec2(1.0, 0.0),
-            predicted_position: vec2(1.0, 0.0),
             displacement: vec2(0.0, 0.0),
             radius: 0.5,
             inv_mass: 1.0,
+            ..Default::default()
+        },
+        Particle {
+            position: vec2(1.0, 0.0),
+            displacement: vec2(0.0, 0.0),
+            radius: 0.5,
+            inv_mass: 1.0,
+            ..Default::default()
         },
     ];
+    for particle in &mut particles {
+        particle.rest_position = particle.position;
+    }
     loop {
         let offset = vec2(100.0, 100.0);
         clear_background(BLACK);
@@ -56,11 +67,9 @@ async fn main() {
                         let delta = pos - other_pos;
                         let dist = delta.length();
                         let penetration = particle.radius + other_particle.radius - dist;
-                        if penetration > 0.0 {
-                            let normal = delta / dist;
-                            displacement += normal * penetration * particle.inv_mass
-                                / (particle.inv_mass + other_particle.inv_mass);
-                        }
+                        let normal = delta / dist;
+                        displacement += normal * penetration * particle.inv_mass
+                            / (particle.inv_mass + other_particle.inv_mass);
                     }
                 }
                 particles[ix].displacement += displacement;
