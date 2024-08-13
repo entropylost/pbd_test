@@ -15,14 +15,15 @@ impl Particles {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Constraint {
+struct Contact {
     colliders: (usize, usize),
     normal: Vec2,
+    stiffness: f32,
 }
 
 #[derive(Debug, Clone, Default)]
 struct Constraints {
-    data: Vec<Constraint>,
+    data: Vec<Contact>,
     stiffness: Vec<f32>,
     dual_multiplier: Vec<f32>,
     dual_gradient: Vec<f32>,
@@ -40,7 +41,7 @@ async fn main() {
     let mut particles = Particles {
         position: vec![
             vec2(0.0, 0.0),
-            vec2(5.0, 0.0),
+            vec2(4.0, 0.0),
             vec2(6.0, 0.0),
             vec2(7.0, 0.0),
         ],
@@ -55,7 +56,8 @@ async fn main() {
         mass: vec![1.0, 1.0, 1.0, 1.0],
     };
 
-    let constraint_step = 1.0;
+    let constraint_step = 0.1;
+    let primal = false;
 
     loop {
         let offset = vec2(100.0, 100.0);
@@ -68,61 +70,97 @@ async fn main() {
                 particles.position[i] += particles.velocity[i];
             }
 
-            let mut constraints = Constraints::default();
+            let mut contacts = vec![];
 
             for i in 0..particles.len() {
                 for j in i + 1..particles.len() {
                     let pi = particles.position[i];
                     let pj = particles.position[j];
                     if pi.distance(pj) <= 1.0 {
-                        constraints.data.push(Constraint {
+                        contacts.push(Contact {
                             colliders: (i, j),
                             normal: (pi - pj).normalize(),
+                            stiffness: 10000.0,
                         });
-                        constraints.stiffness.push(1.0);
-                        constraints.dual_multiplier.push(0.0);
-                        constraints.dual_gradient.push(0.0);
                     }
                 }
             }
-            for _iter in 0..10 {
-                // for i in 0..constraints.len() {
-                //     constraints.dual_multiplier[i] = 0.0;
-                // }
-                // Clear dual multipliers?
-                let mut preconditioner_diag = vec![0.0; constraints.len()];
-                for i in 0..constraints.len() {
-                    let Constraint {
-                        colliders: (a, b),
+            if primal {
+                for _iter in 0..100 {
+                    let mut forces = vec![Vec2::ZERO; particles.len()];
+                    let mut jacobian_diag = vec![Vec2::ZERO; particles.len()];
+
+                    for &Contact {
+                        colliders: (i, j),
                         normal,
-                    } = constraints.data[i];
-                    let constraint_value =
-                        (particles.position[a] - particles.position[b]).dot(normal) - 1.0;
-                    constraints.dual_gradient[i] = -constraint_value
-                        - 1.0 / constraints.stiffness[i] * constraints.dual_multiplier[i];
-                    preconditioner_diag[i] = 1.0
-                        / (1.0 / particles.mass[a]
-                            + 1.0 / particles.mass[b]
-                            + 1.0 / constraints.stiffness[i]);
+                        stiffness,
+                    } in &contacts
+                    {
+                        let pi = particles.position[i];
+                        let pj = particles.position[j];
+                        let constraint = (pi - pj).dot(normal) - 1.0;
+                        let force = normal * stiffness * constraint.min(0.0);
+                        forces[i] -= force;
+                        forces[j] += force;
+                        jacobian_diag[i] += normal * normal * stiffness;
+                        jacobian_diag[j] += normal * normal * stiffness;
+                    }
+                    let mut preconditioner_diag = vec![Vec2::ZERO; particles.len()];
+                    for i in 0..particles.len() {
+                        preconditioner_diag[i] = 1.0 / (particles.mass[i] + jacobian_diag[i])
+                    }
+                    let gradient = (0..particles.len())
+                        .map(|i| {
+                            particles.mass[i] * (particles.velocity[i] - particles.last_velocity[i])
+                                - forces[i]
+                        })
+                        .collect::<Vec<_>>();
+                    for i in 0..particles.len() {
+                        particles.velocity[i] -=
+                            constraint_step * preconditioner_diag[i] * gradient[i];
+                    }
+                    for i in 0..particles.len() {
+                        particles.position[i] = particles.velocity[i] + particles.last_position[i];
+                    }
                 }
-                let delta_multiplier = (0..constraints.len())
-                    .map(|i| {
-                        constraint_step * preconditioner_diag[i] * constraints.dual_gradient[i]
-                    })
-                    .collect::<Vec<_>>();
-                for i in 0..constraints.len() {
-                    constraints.dual_multiplier[i] += delta_multiplier[i];
-                }
-                for i in 0..constraints.len() {
-                    let Constraint {
-                        colliders: (a, b),
-                        normal,
-                    } = constraints.data[i];
-                    particles.velocity[a] += normal * delta_multiplier[i] / particles.mass[a];
-                    particles.velocity[b] -= normal * delta_multiplier[i] / particles.mass[b];
-                }
-                for i in 0..particles.len() {
-                    particles.position[i] = particles.velocity[i] + particles.last_position[i];
+            } else {
+                let mut dual_multiplier = vec![0.0; contacts.len()];
+                for _iter in 0..100 {
+                    let mut preconditioner_diag = vec![0.0; contacts.len()];
+                    let mut dual_gradient = vec![0.0; contacts.len()];
+                    for i in 0..contacts.len() {
+                        let Contact {
+                            colliders: (a, b),
+                            normal,
+                            stiffness,
+                        } = contacts[i];
+                        let constraint =
+                            (particles.position[a] - particles.position[b]).dot(normal) - 1.0;
+                        // let constraint = constraint.min(0.0); // Shouldn't be here probably.
+                        dual_gradient[i] = -constraint - 1.0 / stiffness * dual_multiplier[i];
+                        preconditioner_diag[i] = 1.0
+                            / (1.0 / particles.mass[a] + 1.0 / particles.mass[b] + 1.0 / stiffness);
+                    }
+                    let mut delta_multiplier = vec![0.0; contacts.len()];
+                    for i in 0..contacts.len() {
+                        let dm = dual_multiplier[i];
+                        dual_multiplier[i] +=
+                            constraint_step * preconditioner_diag[i] * dual_gradient[i];
+                        dual_multiplier[i] = dual_multiplier[i].max(0.0); // ?
+                        delta_multiplier[i] = dual_multiplier[i] - dm;
+                    }
+                    for i in 0..contacts.len() {
+                        let Contact {
+                            colliders: (a, b),
+                            normal,
+                            ..
+                        } = contacts[i];
+                        particles.velocity[a] += normal * delta_multiplier[i] / particles.mass[a];
+                        particles.velocity[b] -= normal * delta_multiplier[i] / particles.mass[b];
+                    }
+                    for i in 0..particles.len() {
+                        particles.position[i] = particles.velocity[i] + particles.last_position[i];
+                    }
                 }
             }
         }
